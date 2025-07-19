@@ -1,0 +1,29 @@
+services:
+  video-downloader:
+    image: video-downloader:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    volumes:
+      - ./src:/app/src:ro
+      - ./.env:/app/.env:ro
+      - ./urls.txt:/app/urls.txt:ro
+      - ./vpn_config_files:/app/vpn_config_files:ro
+      - ${HOME}/Videos:/app/downloads
+    environment:
+      - CONFIG_DIR=/app/vpn_config_files
+      - DOWNLOAD_DIR=/app/downloads
+      - URL_FILE=/app/urls.txt
+    command: /app/src/main.sh
+    restart: "no"
