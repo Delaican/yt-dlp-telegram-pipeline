@@ -5,7 +5,7 @@ connect_vpn() {
     local config_file="$1"
     local auth_file="$2"
     
-    echo "🔄 Connecting to VPN using $(basename "$config_file")..." >&2
+    echo "Connecting to VPN using $(basename "$config_file")..." >&2
     # Ensure no other OpenVPN process is running
     pkill openvpn
     sleep 3
@@ -22,23 +22,23 @@ connect_vpn() {
 
     # Test DNS resolution
     if nslookup google.com > /dev/null 2>&1; then
-        echo "✅ DNS resolution working" >&2
+        echo "DNS resolution working" >&2
     else
-        echo "⚠️  DNS resolution failed" >&2
+        echo "DNS resolution failed" >&2
         return 1
     fi
 
     if [ -n "$new_ip" ]; then
-        echo "✅ VPN connected. New IP: $new_ip" >&2
+        echo "VPN connected. New IP: $new_ip" >&2
     else
-        echo "⚠️  Could not verify new IP address. Check connection." >&2
+        echo "Could not verify new IP address. Check connection." >&2
     fi
 }
 
 # Function to disconnect from VPN
 disconnect_vpn() {
-    echo "🛑 Disconnecting from VPN..."
+    echo "Disconnecting from VPN..."
     pkill openvpn
     sleep 3
-    echo "✅ VPN disconnected."
+    echo "VPN disconnected."
 }

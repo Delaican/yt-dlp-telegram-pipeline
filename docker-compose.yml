@@ -15,12 +15,12 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./.env:/app/.env:ro
-      - ./urls.txt:/app/urls.txt:ro
+      - ./urls:/app/urls:ro
       - ./vpn_config_files:/app/vpn_config_files:ro
       - ${HOME}/Videos:/app/downloads
     environment:
       - CONFIG_DIR=/app/vpn_config_files
       - DOWNLOAD_DIR=/app/downloads
-      - URL_FILE=/app/urls.txt
+      - URL_FILE=/app/urls/urls.txt
     command: /app/src/main.sh
     restart: "no"

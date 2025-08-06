@@ -7,26 +7,33 @@ download_video() {
     local output_dir="$2"
     local counter="$3"
     
-    local count_string
-    count_string=$(printf "%03d" "$counter")
-    local output_template="${output_dir}/${count_string}_%(title)s.%(ext)s"
+    local count_string=""
+    if (( $counter != 0 )); then
+        count_string="$(printf "%03d" "$counter")_"
+    fi
+    local output_template="${output_dir}/${count_string}%(title)s.%(ext)s"
     
-    echo "📥 Downloading video #$counter from URL: $url" >&2
+    echo "Downloading video #$counter from URL: $url" >&2
     
     # Use --print filename to reliably get the final file path
     local downloaded_file
     downloaded_file=$(yt-dlp \
         -f "best[height<=720]" \
-        --max-filesize 2000M \
         -o "$output_template" \
         --print filename \
-        "$url")
+        "$url" 2>&1)
+    
+    # The actual download happens here, as --print happens after processing
+    yt-dlp \
+        -f "best[height<=720]" \
+        -o "$output_template" \
+        "$url" >&2
     
     if [ $? -eq 0 ] && [ -f "$downloaded_file" ]; then
-        echo "✅ Download complete: $downloaded_file" >&2
+        echo "Download complete: $downloaded_file" >&2
         echo "$downloaded_file" # Return the filename
     else
-        echo "❌ Download failed for URL: $url" >&2
+        echo "Download failed for URL: $url" >&2
         return 1
     fi
 }

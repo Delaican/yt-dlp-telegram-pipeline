@@ -38,8 +38,8 @@ A containerized solution that automates video downloading from URL lists and upl
 2. **Prepare video URLs**
    ```bash
    # Add URLs to download (one per line)
-   echo "https://example.com/video1" >> urls.txt
-   echo "https://example.com/video2" >> urls.txt
+   echo "https://example.com/video1" >> urls/urls.txt
+   echo "https://example.com/video2" >> urls/urls.txt
    ```
 
 3. **Configure environment**
@@ -87,29 +87,31 @@ The `run.sh` script supports various flags for customizing behavior:
 
 **Basic Operations**
 - `-d, --download` - Enable video downloading
-- `-u, --upload` - Enable video uploading to Telegram
-- `-v, --vpn` - Enable VPN rotation
+- `-t, --upload` - Enable video uploading to Telegram
+- `-v, --vpn` - Enable VPN rotation for downloading
 
 **File Management**
 - `-c, --count NUMBER` - Start processing from line NUMBER in URLs file
 - `-f, --file PATH` - Upload a single specific file
+- `--url URL` - Provide URL for single download
 - `--url-file PATH` - Use custom URLs file (default: urls.txt)
 - `--download-dir PATH` - Set custom download directory
 - `--config-dir PATH` - Set custom VPN config directory
-
-> **Note**: VPN is thought for download only to avoid geo-restrictions from certain sites, it is not thought for uploading as it makes the upload prone to fail.
 
 **Usage Examples**
 
 ```bash
 # Upload a single file without downloading
-./run.sh -u -f /path/to/video.mp4
+./run.sh -t -f /path/to/video.mp4
 
 # Download only, no upload, starting from line 10
-./run.sh -c 10 -d
+./run.sh -c 10 --download
+
+# Download one video with url using VPN
+./run.sh -v -d --url https://video-url.com
 
 # Download and upload starting from line 5 with VPN rotation
-./run.sh -c 5 -v -d -u
+./run.sh -c 5 -v -d -t
 # In this example, VPN will be used for downloading, but connection will be closed for uploading the file.
 # After the upload finishes, the VPN will be connected again to continue next download
 ```
@@ -125,7 +127,7 @@ The `run.sh` script supports various flags for customizing behavior:
 **Volume Mounts**
 - Downloads: `$HOME/Videos` (configurable)
 - VPN configs: `./vpn_config_files` 
-- URL list: `./urls.txt`   
+- URL directory (for storing URL list file): `urls/`   
 - Environment: `./.env` 
 - Source code: `./src` 
 

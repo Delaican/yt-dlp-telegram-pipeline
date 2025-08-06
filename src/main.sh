@@ -4,7 +4,7 @@
 DEFAULT_CONFIG_DIR="/app/vpn_config_files"
 DEFAULT_CONFIG1=$(find "$DEFAULT_CONFIG_DIR" -name "*.ovpn" | head -1 | xargs basename 2>/dev/null)
 DEFAULT_CONFIG2=$(find "$DEFAULT_CONFIG_DIR" -name "*.ovpn" | tail -1 | xargs basename 2>/dev/null)
-DEFAULT_URL_FILE="urls.txt"
+DEFAULT_URL_FILE="/app/urls/urls.txt"
 DEFAULT_DOWNLOAD_DIR="/app/downloads"
 
 # --- Configuration Variables ---
@@ -28,6 +28,7 @@ USE_VPN=false
 DO_DOWNLOAD=false
 DO_UPLOAD=false
 START_COUNT=1
+DOWNLOAD_URL=""
 UPLOAD_FILE_PATH=""
 
 usage() {
@@ -38,22 +39,23 @@ OPTIONS:
     -c, --count NUMBER      Starting line number in the URL file (positive integer)
     -v, --vpn               Enable VPN connection and rotation
     -d, --download          Enable video downloading from URL file
-    -u, --upload            Enable uploading to Telegram
+    -t, --upload            Enable uploading to Telegram
     -f, --file PATH         Specify a single file to upload
     
     --config-dir PATH       Directory containing VPN config files (default: $DEFAULT_CONFIG_DIR)
     --config1 FILENAME      Primary VPN config filename (default: $DEFAULT_CONFIG1)
     --config2 FILENAME      Secondary VPN config filename (default: $DEFAULT_CONFIG2)
+    --url URL               URL for single download
     --url-file PATH         Path to URL file (default: $DEFAULT_URL_FILE)
     --download-dir PATH     Directory to download videos (default: $DEFAULT_DOWNLOAD_DIR)
     
     -h, --help              Show this help message
 
 EXAMPLES:
-    $0 --count 1 --vpn --download --upload
-    $0 --vpn --download --upload
-    $0 -c 5 --file /path/to/video.mp4 --upload
-    $0 --config-dir /custom/path --url-file /path/to/urls.txt --download
+    $0 --vpn --download --upload --url-file
+    $0 -c 10 -d
+    $0 --file /path/to/video.mp4 -t
+    $0 --config-dir /custom/path --download --url https://video-url.com
 
 ENVIRONMENT VARIABLES:
     CONFIG_DIR      Override default config directory
@@ -83,33 +85,65 @@ while [[ $# -gt 0 ]]; do
             DO_DOWNLOAD=true
             shift
             ;;
-        -u|--upload)
+        -t|--upload)
             DO_UPLOAD=true
             shift
             ;;
         -f|--file)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "Error: --file requires a file path" >&2
+                exit 1
+            fi
             UPLOAD_FILE_PATH="$2"
             shift 2
             ;;
         --config-dir)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "Error: --config-dir requires a directory path" >&2
+                exit 1
+            fi
             CONFIG_DIR="$2"
             CONFIG1="${CONFIG_DIR}/${DEFAULT_CONFIG1}"
             CONFIG2="${CONFIG_DIR}/${DEFAULT_CONFIG2}"
             shift 2
             ;;
         --config1)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "Error: --config1 requires a filename" >&2
+                exit 1
+            fi
             CONFIG1="${CONFIG_DIR}/$2"
             shift 2
             ;;
         --config2)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "Error: --config2 requires a filename" >&2
+                exit 1
+            fi
             CONFIG2="${CONFIG_DIR}/$2"
             shift 2
             ;;
+        --url)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "Error: --url requires a value" >&2
+                exit 1
+            fi
+            DOWNLOAD_URL="$2"
+            shift 2
+            ;;
         --url-file)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "Error: --url-file requires a file path" >&2
+                exit 1
+            fi
             URL_FILE="$2"
             shift 2
             ;;
         --download-dir)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "Error: --download-dir requires a directory path" >&2
+                exit 1
+            fi
             DOWNLOAD_DIR="$2"
             shift 2
             ;;
@@ -126,7 +160,7 @@ done
 # --- Validation ---
 # Check if at least one action flag is provided
 if [[ "$DO_DOWNLOAD" == "false" && "$DO_UPLOAD" == "false" ]]; then
-    echo "Error: At least one action flag must be provided (-d/--download or -u/--upload)" >&2
+    echo "Error: At least one action flag must be provided (-d/--download or -t/--upload)" >&2
     echo "Use -h or --help for usage information."
     exit 1
 fi
@@ -155,8 +189,8 @@ validate_config() {
     fi
 
     # Validate URL file if downloading is enabled
-    if [[ "$DO_DOWNLOAD" == "true" && ! -f "$URL_FILE" ]]; then
-        echo "Error: URL file not found: $URL_FILE" >&2
+    if [[ "$DO_DOWNLOAD" == "true" && ! -f "$URL_FILE" && -z "$DOWNLOAD_URL" ]]; then
+        echo 'Error: No URL provided: Provide one with --url or with a "urls.txt" file.' >&2
         exit 1
     fi
 
@@ -174,6 +208,7 @@ validate_config() {
         }
     fi
 }
+
 # --- Display Configuration ---
 show_config() {
     echo "=== Configuration ==="
@@ -192,7 +227,7 @@ show_config() {
 
 # --- Cleanup Handler ---
 cleanup() {
-    echo -e "\n🧹 Cleaning up..."
+    echo -e "\nCleaning up..."
     if [ "$USE_VPN" = true ]; then
         disconnect_vpn
     fi
@@ -220,6 +255,7 @@ handle_vpn_connection() {
         echo 1 # Return new config number
     fi
 }
+
 # --- Main Logic ---
 
 # Run validation
@@ -237,7 +273,24 @@ if [ "$DO_UPLOAD" = true ] && [ "$DO_DOWNLOAD" = false ] && [ -n "$UPLOAD_FILE_P
     exit 0
 fi
 
-# --- Scenarios 2 & 3: Multiple Processing Loop ---
+# Scenario 2: Single Download
+if [[ $DO_DOWNLOAD = true && -n $DOWNLOAD_URL ]]; then
+    echo "Mode: Single Download"
+
+    if [ "$USE_VPN" = true ]; then
+        AUTH_FILE=$(mktemp)
+        trap 'rm -f "$AUTH_FILE"; exit' EXIT
+        echo "$VPN_USERNAME" > "$AUTH_FILE"
+        echo "$VPN_PASSWORD" >> "$AUTH_FILE"
+        connect_vpn "$CONFIG1" "$AUTH_FILE"
+    fi
+
+    download_video "$DOWNLOAD_URL" "$DOWNLOAD_DIR" 0
+
+    cleanup
+fi
+
+# --- Scenarios 3: Multiple Processing Loop ---
 if { [ "$DO_DOWNLOAD" = true ] || [ "$DO_UPLOAD" = true ]; } && [ -z "$UPLOAD_FILE_PATH" ]; then
     echo "Mode: Multiple Processing (Download/Upload)"
 
@@ -271,7 +324,7 @@ if { [ "$DO_DOWNLOAD" = true ] || [ "$DO_UPLOAD" = true ]; } && [ -z "$UPLOAD_FI
             # Read the next line from the URL file via the file descriptor.
             # If read fails (end of file), break the loop.
             if ! read -r item <&3; then
-                echo "✅ End of URL file reached."
+                echo "End of URL file reached."
                 break
             fi
         else
@@ -280,15 +333,15 @@ if { [ "$DO_DOWNLOAD" = true ] || [ "$DO_UPLOAD" = true ]; } && [ -z "$UPLOAD_FI
             item=$(find "$DOWNLOAD_DIR" -type f -name "*.mp4" -not -name "*.*.*" | sort | sed -n "${count}p")
             # If find returns nothing for the current line number, we're done.
             if [ -z "$item" ]; then
-                echo "✅ No more files to process."
+                echo "No more files to process."
                 break
             fi
         fi
 
         echo "--- Processing item #$count (Iteration #$iteration) ---"
 
-        # --- Step 2: Swap VPN to avoid load balancing (every 2 iterations) ---
-        if (( iteration % 3 == 0 )) && [ "$USE_VPN" = true ]; then
+        # --- Step 2: Swap VPN to avoid load balancing (every 3 iterations) ---
+        if (( iteration > 1 && iteration % 3 == 0 )) && [ "$USE_VPN" = true ]; then
             echo "Swapping VPN..."
             current_config=$(handle_vpn_connection "$AUTH_FILE" "$current_config" 1)
         fi
@@ -309,16 +362,17 @@ if { [ "$DO_DOWNLOAD" = true ] || [ "$DO_UPLOAD" = true ]; } && [ -z "$UPLOAD_FI
             fi
             if [ -n "$file_to_process" ] && [ -f "$file_to_process" ]; then
                 if ! upload_to_telegram "$file_to_process"; then
-                    echo "❌ CRITICAL: Failed to upload '$file_to_process'."
+                    echo "CRITICAL: Failed to upload '$file_to_process'."
                     exit 1
                 fi
-                echo "✅ Successfully uploaded."
+                echo "Successfully uploaded."
             else
-                echo "⚠️  Skipping upload: File not found or download failed."
+                echo "Skipping upload: File not found or download failed."
             fi
             if [ "$USE_VPN" = true ]; then
                 stop_telegram_server
-                if (( iteration % 2 != 0 )); then
+                # VPN rotation will happen on next iteration, so there's no need to connect now
+                if (( iteration > 1 && iteration % 2 != 0 )); then
                     current_config=$(handle_vpn_connection "$AUTH_FILE" "$current_config" 0)
                 fi
             fi
@@ -333,7 +387,7 @@ if { [ "$DO_DOWNLOAD" = true ] || [ "$DO_UPLOAD" = true ]; } && [ -z "$UPLOAD_FI
         exec 3<&-
     fi
 
-    echo "✅ Multiple processing loop finished."
+    echo "Multiple processing loop finished."
     cleanup
     exit 0
 fi
