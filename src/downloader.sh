@@ -17,17 +17,12 @@ download_video() {
     local downloaded_file
     downloaded_file=$(yt-dlp \
         -f "best[height<=720]" \
+        --max-filesize 2000M \
         -o "$output_template" \
         --print filename \
-        "$url" 2>&1)
+        "$url")
     
-    # The actual download happens here, as --print happens after processing
-    yt-dlp \
-        -f "best[height<=720]" \
-        -o "$output_template" \
-        "$url" >&2
-        
-    if [ -f "$downloaded_file" ]; then
+    if [ $? -eq 0 ] && [ -f "$downloaded_file" ]; then
         echo "✅ Download complete: $downloaded_file" >&2
         echo "$downloaded_file" # Return the filename
     else

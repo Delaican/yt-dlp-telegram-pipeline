@@ -58,7 +58,7 @@ A containerized solution that automates video downloading from URL lists and upl
    ./run.sh -c 1 -d
    ```
 
-> **First Build Notice:** Initial container build takes several minutes due to the Telegram Bot API server compilation. Subsequent builds are much faster thanks to multi-stage caching.
+> **Note:** First container build takes several minutes due to the Telegram Bot API server compilation. Subsequent builds are much faster thanks to multi-stage caching.
 
 ## Configuration
 
@@ -97,17 +97,21 @@ The `run.sh` script supports various flags for customizing behavior:
 - `--download-dir PATH` - Set custom download directory
 - `--config-dir PATH` - Set custom VPN config directory
 
+> **Note**: VPN is thought for download only to avoid geo-restrictions from certain sites, it is not thought for uploading as it makes the upload prone to fail.
+
 **Usage Examples**
 
 ```bash
-# Download and upload starting from line 5 with VPN rotation
-./run.sh -c 5 -v -d -u
-
 # Upload a single file without downloading
 ./run.sh -u -f /path/to/video.mp4
 
 # Download only, no upload, starting from line 10
 ./run.sh -c 10 -d
+
+# Download and upload starting from line 5 with VPN rotation
+./run.sh -c 5 -v -d -u
+# In this example, VPN will be used for downloading, but connection will be closed for uploading the file.
+# After the upload finishes, the VPN will be connected again to continue next download
 ```
 
 ## Docker Architecture
@@ -135,7 +139,3 @@ The `run.sh` script supports various flags for customizing behavior:
 - [Docker](https://docker.com) - Containerization platform
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Video download engine
 - [Telegram Bot API](https://github.com/tdlib/telegram-bot-api) - Local API server for large uploads
-
-**System Requirements**
-- OpenVPN - VPN client functionality
-- Linux/macOS with Docker support

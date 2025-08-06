@@ -20,7 +20,7 @@ source /app/src/telegram.sh
 source /app/src/vpn.sh
 source /app/src/downloader.sh
 
-# Load environment variables (API keys, tokens, etc.)
+# Load environment variables
 source /app/.env
 
 # --- Default Flag Values ---
@@ -193,7 +193,6 @@ show_config() {
 # --- Cleanup Handler ---
 cleanup() {
     echo -e "\n🧹 Cleaning up..."
-    [ -n "$TELEGRAM_TEMP_DIR" ] && rm -rf "$TELEGRAM_TEMP_DIR"
     if [ "$USE_VPN" = true ]; then
         disconnect_vpn
     fi
@@ -208,6 +207,19 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM
 
+handle_vpn_connection() {
+    local auth_file="$1"
+    local current_config_val="$2"
+    local swap="$3"
+
+    if (( ( (current_config_val == 1) && swap ) || ( (current_config_val == 2) && ! swap ) )); then
+        connect_vpn "$CONFIG2" "$AUTH_FILE"
+        echo 2 # Return new config number
+    else
+        connect_vpn "$CONFIG1" "$AUTH_FILE"
+        echo 1 # Return new config number
+    fi
+}
 # --- Main Logic ---
 
 # Run validation
@@ -220,95 +232,109 @@ show_config
 if [ "$DO_UPLOAD" = true ] && [ "$DO_DOWNLOAD" = false ] && [ -n "$UPLOAD_FILE_PATH" ]; then
     echo "Mode: Single File Upload"
     start_telegram_server || exit 1
-    check_telegram_api || exit 1
     upload_to_telegram "$UPLOAD_FILE_PATH"
-    wait_for_telegram_api
     stop_telegram_server
     exit 0
 fi
 
-# Scenario 1.5: Only upload multiple files
-if [ "$DO_UPLOAD" = true ] && [ "$DO_DOWNLOAD" = false ] && [ -n "$START_COUNT" ] && [ -z "$UPLOAD_FILE_PATH" ]; then
-    echo "Mode: Multiple File Upload"
-    start_telegram_server || exit 1
-    check_telegram_api || exit 1
-    # get a list of mp4 files from $START_COUNT
-    UPLOAD_FILE_PATH=$(find "$DOWNLOAD_DIR" -type f | sort | sed -n "${START_COUNT},\$ { /.*\.mp4$/p }")
-    # loop through each file and upload
-    while IFS= read -r file; do
-        if [ -f "$file" ]; then
-            echo "Uploading file: $file"
-            upload_to_telegram "$file"
-            wait_for_telegram_api
-        else
-            echo "File not found: $file"
-        fi
-        # Update list of files to upload
-        UPLOAD_FILE_PATH=$(find "$DOWNLOAD_DIR" -type f | sort | sed -n "${START_COUNT},\$ { /.*\.mp4$/p }")
-    done <<< "$UPLOAD_FILE_PATH"
-    stop_telegram_server
-    exit 0
-fi
+# --- Scenarios 2 & 3: Multiple Processing Loop ---
+if { [ "$DO_DOWNLOAD" = true ] || [ "$DO_UPLOAD" = true ]; } && [ -z "$UPLOAD_FILE_PATH" ]; then
+    echo "Mode: Multiple Processing (Download/Upload)"
 
-# Scenario 2: Main processing loop (downloading and/or uploading)
-if [ "$DO_DOWNLOAD" = true ]; then
-    echo "Mode: Processing from URL file"
-    
-    # TODO: Probe both vpns to start with the best one
-
-    # Setup for VPN if enabled
+    # --- Setup Phase ---
     if [ "$USE_VPN" = true ]; then
         AUTH_FILE=$(mktemp)
-        trap "rm -f $AUTH_FILE; exit" EXIT # Ensure auth file is cleaned up
+        trap 'rm -f "$AUTH_FILE"; exit' EXIT
         echo "$VPN_USERNAME" > "$AUTH_FILE"
         echo "$VPN_PASSWORD" >> "$AUTH_FILE"
         connect_vpn "$CONFIG1" "$AUTH_FILE"
     fi
 
-    # Setup for Telegram if uploading is enabled
-    if [ "$DO_UPLOAD" = true ]; then
-        start_telegram_server || exit 1
-        check_telegram_api || exit 1
+    # For download mode, open the URL file on a specific file descriptor for efficient line-by-line reading.
+    if [ "$DO_DOWNLOAD" = true ]; then
+        exec 3< <(tail -n "+$START_COUNT" "$URL_FILE")
     fi
 
+    if [ "$DO_UPLOAD" ] && [ "$USE_VPN" == "false" ]; then
+        start_telegram_server
+    fi
+
+    # --- Multiple Processing Loop ---
     current_config=1
     count=$START_COUNT
     iteration=1
-    total_lines=$(wc -l < "$URL_FILE")
-    remaining_lines=$((total_lines - START_COUNT + 1))
 
-    echo "Processing $remaining_lines URLs starting from line $START_COUNT..."
-
-    while IFS= read -r line; do
-        echo "--- Iteration #$iteration (URL line #$count/$total_lines) ---"
-        
-        # Rotate VPN every 2 iterations if enabled
-        if [ "$USE_VPN" = true ] && (( iteration > 1 && (iteration - 1) % 2 == 0 )); then
-            if [ $current_config -eq 1 ]; then
-                connect_vpn "$CONFIG2" "$AUTH_FILE"
-                current_config=2
-            else
-                connect_vpn "$CONFIG1" "$AUTH_FILE"
-                current_config=1
+    while true; do
+        # --- Step 1: Get the next item dynamically based on the mode ---
+        item=""
+        if [ "$DO_DOWNLOAD" = true ]; then
+            # Read the next line from the URL file via the file descriptor.
+            # If read fails (end of file), break the loop.
+            if ! read -r item <&3; then
+                echo "✅ End of URL file reached."
+                break
+            fi
+        else
+            # For upload-only mode, find the Nth file on each iteration.
+            # This preserves the dynamic discovery of the original script.
+            item=$(find "$DOWNLOAD_DIR" -type f -name "*.mp4" -not -name "*.*.*" | sort | sed -n "${count}p")
+            # If find returns nothing for the current line number, we're done.
+            if [ -z "$item" ]; then
+                echo "✅ No more files to process."
+                break
             fi
         fi
 
-        # Download the video
-        downloaded_file=$(download_video "$line" "$DOWNLOAD_DIR" "$count")
-        
-        # Upload if enabled and download was successful
-        if [ "$DO_UPLOAD" = true ] && [ -n "$downloaded_file" ] && [ -f "$downloaded_file" ]; then
-            upload_to_telegram "$downloaded_file"
-        elif [ "$DO_UPLOAD" = true ]; then
-            echo "Skipping upload because download failed."
+        echo "--- Processing item #$count (Iteration #$iteration) ---"
+
+        # --- Step 2: Swap VPN to avoid load balancing (every 2 iterations) ---
+        if (( iteration % 3 == 0 )) && [ "$USE_VPN" = true ]; then
+            echo "Swapping VPN..."
+            current_config=$(handle_vpn_connection "$AUTH_FILE" "$current_config" 1)
         fi
-        
+
+        # --- Step 3: Core Action ---
+        file_to_process=""
+        if [ "$DO_DOWNLOAD" = true ]; then
+            file_to_process=$(download_video "$item" "$DOWNLOAD_DIR" "$count")
+        else
+            file_to_process="$item"
+        fi
+
+        # --- Step 4: Upload if enabled ---
+        if [ "$DO_UPLOAD" = true ]; then
+            if [ "$USE_VPN" = true ]; then
+                disconnect_vpn
+                start_telegram_server || exit 1
+            fi
+            if [ -n "$file_to_process" ] && [ -f "$file_to_process" ]; then
+                if ! upload_to_telegram "$file_to_process"; then
+                    echo "❌ CRITICAL: Failed to upload '$file_to_process'."
+                    exit 1
+                fi
+                echo "✅ Successfully uploaded."
+            else
+                echo "⚠️  Skipping upload: File not found or download failed."
+            fi
+            if [ "$USE_VPN" = true ]; then
+                stop_telegram_server
+                if (( iteration % 2 != 0 )); then
+                    current_config=$(handle_vpn_connection "$AUTH_FILE" "$current_config" 0)
+                fi
+            fi
+        fi
+
         count=$((count + 1))
         iteration=$((iteration + 1))
-    done < <(tail -n +$START_COUNT "$URL_FILE")
+    done
 
-    echo "✅ Main processing loop finished."
-    cleanup # Run normal cleanup
+    # Close the file descriptor if it was opened.
+    if [ "$DO_DOWNLOAD" = true ]; then
+        exec 3<&-
+    fi
+
+    echo "✅ Multiple processing loop finished."
+    cleanup
     exit 0
 fi
 
